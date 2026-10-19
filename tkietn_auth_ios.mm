@@ -19,7 +19,14 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <dlfcn.h>
-#include <sys/ptrace.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#ifndef PT_DENY_ATTACH
+#define PT_DENY_ATTACH 31
+#endif
+typedef int (*ptrace_ptr_t)(int _request, pid_t _pid, void *_addr, int _data);
 
 // ==========================================
 // STRING OBFUSCATION MACRO
@@ -226,8 +233,12 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 // 3. CHỐNG DEBUGGER + ANTI-FRIDA
 // ==========================================
 + (void)startWatchdog {
-    // Chặn LLDB/GDB attach ngay lập tức
-    ptrace(PT_DENY_ATTACH, 0, 0, 0);
+    // Chặn LLDB/GDB attach ngay lập tức (dùng dlsym tương thích mọi SDK iOS)
+    void *h = dlopen(NULL, RTLD_GLOBAL | RTLD_NOW);
+    if (h) {
+        ptrace_ptr_t ptrace_func = (ptrace_ptr_t)dlsym(h, "ptrace");
+        if (ptrace_func) ptrace_func(PT_DENY_ATTACH, 0, 0, 0);
+    }
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
         while (1) {
