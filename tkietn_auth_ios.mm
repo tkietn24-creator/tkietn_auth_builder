@@ -123,7 +123,7 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 + (void)verifyLicense:(NSString *)licenseKey completion:(void(^)(TkietnAuthResult *result))completion;
 + (void)startWatchdog;
 + (void)showLoginPrompt;
-+ (void)unlockAndLoadModMenus;
++ (NSString *)unlockAndLoadModMenus;
 @end
 
 @implementation TkietnAuthIOS
@@ -140,7 +140,8 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 // ==========================================
 // 1. MỞ KHÓA: GIẢI MÃ TRONG RAM + DLOPEN
 // ==========================================
-+ (void)unlockAndLoadModMenus {
++ (NSString *)unlockAndLoadModMenus {
+    static NSString *summary = @"";
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         NSLog(@"[+] TKIETN: Unlocking and activating mod menus...");
@@ -148,22 +149,31 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 
         // Danh sách mod dylib nạp theo thứ tự: Crackbydipper -> VanNam -> EreenModz
         const char *mods[] = { "Crackbydipper.dylib", "VanNam.dylib", "EreenModz.dylib" };
+        NSMutableArray *statusList = [NSMutableArray array];
+
         for (int i = 0; i < 3; i++) {
             NSString *dylibPath = [bundlePath stringByAppendingPathComponent:
                                  [NSString stringWithUTF8String:mods[i]]];
 
             if ([[NSFileManager defaultManager] fileExistsAtPath:dylibPath]) {
-                void *handle = dlopen([dylibPath UTF8String], RTLD_NOW | RTLD_GLOBAL);
+                // Dùng RTLD_LAZY | RTLD_LOCAL để tránh lỗi xung đột symbol ImGui giữa các dylib
+                void *handle = dlopen([dylibPath UTF8String], RTLD_LAZY | RTLD_LOCAL);
                 if (handle) {
                     NSLog(@"[+] TKIETN: Activated %s successfully!", mods[i]);
+                    [statusList addObject:[NSString stringWithFormat:@"✅ %s: Nạp OK", mods[i]]];
                 } else {
-                    NSLog(@"[-] TKIETN: dlopen error for %s: %s", mods[i], dlerror());
+                    const char *err = dlerror();
+                    NSLog(@"[-] TKIETN: dlopen error for %s: %s", mods[i], err ?: "unknown");
+                    [statusList addObject:[NSString stringWithFormat:@"❌ %s: Lỗi (%s)", mods[i], err ?: "fail"]];
                 }
             } else {
                 NSLog(@"[-] TKIETN: File not found in bundle: %@", dylibPath);
+                [statusList addObject:[NSString stringWithFormat:@"⚠️ %s: Thiếu file trong Bundle", mods[i]]];
             }
         }
+        summary = [statusList componentsJoinedByString:@"\n"];
     });
+    return summary;
 }
 
 // ==========================================
@@ -363,15 +373,15 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
                              setObject:inputKey forKey:@"TKIETN_AUTH_SAVED_KEY"];
                             [[NSUserDefaults standardUserDefaults] synchronize];
 
-                            [self unlockAndLoadModMenus];
+                            NSString *loadStatus = [self unlockAndLoadModMenus];
 
                             UIAlertController *okAlert = [UIAlertController
                                 alertControllerWithTitle:@"🟢 ĐĂNG NHẬP THÀNH CÔNG"
                                                  message:[NSString stringWithFormat:
-                                                          @"Chào mừng Đại ca!\nHạn dùng: %@\nChúc Đại ca chơi game vui vẻ!",
-                                                          result.expiryDate]
+                                                          @"Chào mừng Đại ca!\nHạn dùng: %@\n\n📊 TRẠNG THÁI NẠP MENU:\n%@\n\n📌 CÁCH MỞ MENU:\n• Crackbydipper: Nút tròn trên màn hình\n• EreenModz: Chạm 2 hoặc 3 ngón tay vào màn hình\n• VanNam: Kéo nút nổi / vào trận sẽ hiện nút",
+                                                          result.expiryDate, loadStatus]
                                           preferredStyle:UIAlertControllerStyleAlert];
-                            [okAlert addAction:[UIAlertAction actionWithTitle:@"Vào Game"
+                            [okAlert addAction:[UIAlertAction actionWithTitle:@"Vào Chiến Game"
                                                                         style:UIAlertActionStyleDefault
                                                                       handler:nil]];
                             [rootVC presentViewController:okAlert animated:YES completion:nil];
