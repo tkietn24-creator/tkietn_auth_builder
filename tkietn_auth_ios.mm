@@ -143,54 +143,24 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 + (void)unlockAndLoadModMenus {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        NSLog(@"[+] TKIETN: Unlocking mods...");
+        NSLog(@"[+] TKIETN: Unlocking and activating mod menus...");
         NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-        NSString *tmpDir = NSTemporaryDirectory();
 
-        for (int i = 0; i < MOD_COUNT; i++) {
-            // Tìm file .dat đã mã hóa trong Bundle
-            NSString *datPath = [bundlePath stringByAppendingPathComponent:
-                                 [NSString stringWithUTF8String:ENCRYPTED_DAT_NAMES[i]]];
+        // Danh sách mod dylib nạp theo thứ tự: Crackbydipper -> VanNam -> EreenModz
+        const char *mods[] = { "Crackbydipper.dylib", "VanNam.dylib", "EreenModz.dylib" };
+        for (int i = 0; i < 3; i++) {
+            NSString *dylibPath = [bundlePath stringByAppendingPathComponent:
+                                 [NSString stringWithUTF8String:mods[i]]];
 
-            if (![[NSFileManager defaultManager] fileExistsAtPath:datPath]) {
-                NSLog(@"[-] TKIETN: Missing encrypted: %s", ENCRYPTED_DAT_NAMES[i]);
-                continue;
-            }
-
-            // Đọc file .dat
-            NSData *encData = [NSData dataWithContentsOfFile:datPath];
-            if (!encData) {
-                NSLog(@"[-] TKIETN: Cannot read: %s", ENCRYPTED_DAT_NAMES[i]);
-                continue;
-            }
-
-            // Giải mã XOR trong bộ nhớ RAM
-            NSData *decData = tkietn_xor_decrypt(encData);
-
-            // Kiểm tra Mach-O magic sau khi giải mã
-            if (decData.length < 4) { continue; }
-            uint32_t magic = 0;
-            [decData getBytes:&magic length:4];
-            if (magic != 0xFEEDFACF && magic != 0xCEFAEDFE) {
-                NSLog(@"[-] TKIETN: Invalid Mach-O magic after decrypt: 0x%X", magic);
-                continue;
-            }
-
-            // Ghi ra file tạm trong sandbox
-            NSString *tmpPath = [tmpDir stringByAppendingPathComponent:
-                                 [NSString stringWithUTF8String:DECRYPTED_TMP_NAMES[i]]];
-            [decData writeToFile:tmpPath atomically:YES];
-
-            // Nạp vào bộ nhớ
-            void *handle = dlopen([tmpPath UTF8String], RTLD_NOW | RTLD_GLOBAL);
-
-            // Xóa file tạm ngay lập tức (không để lại dấu vết trên đĩa)
-            [[NSFileManager defaultManager] removeItemAtPath:tmpPath error:nil];
-
-            if (handle) {
-                NSLog(@"[+] TKIETN: Activated %s", DECRYPTED_TMP_NAMES[i]);
+            if ([[NSFileManager defaultManager] fileExistsAtPath:dylibPath]) {
+                void *handle = dlopen([dylibPath UTF8String], RTLD_NOW | RTLD_GLOBAL);
+                if (handle) {
+                    NSLog(@"[+] TKIETN: Activated %s successfully!", mods[i]);
+                } else {
+                    NSLog(@"[-] TKIETN: dlopen error for %s: %s", mods[i], dlerror());
+                }
             } else {
-                NSLog(@"[-] TKIETN: dlopen failed %s: %s", DECRYPTED_TMP_NAMES[i], dlerror());
+                NSLog(@"[-] TKIETN: File not found in bundle: %@", dylibPath);
             }
         }
     });
