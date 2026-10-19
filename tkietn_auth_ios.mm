@@ -1,9 +1,10 @@
 /**
  * ============================================================================
- * 🍏 TKIETN-AUTH VIP iOS NATIVE SDK & HOOK ENGINE
+ * 🍏 TKIETN-AUTH VIP iOS NATIVE SDK & HOOK GATEWAY
  * ============================================================================
  * Dành cho Free Fire iOS / TrollStore / Sideloadly / Scarlet / Jailbreak
  * - Tác giả: tkietn
+ * - Tính năng: Gatekeeper Auth (Nhập đúng Key mới dlopen kích hoạt Menu)
  * - Giao thức: HTTP/HTTPS REST API (zkvauth.site)
  * - Tương thích: iOS 14.0 - iOS 18.x (ARM64 / ARM64e)
  * ============================================================================
@@ -16,6 +17,7 @@
 #import <sys/sysctl.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <dlfcn.h>
 
 // ==========================================
 // CẤU HÌNH SERVER AUTH CỦA ĐẠI CA
@@ -42,7 +44,6 @@
 - (void)URLSession:(NSURLSession *)session 
 didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge 
  completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential * _Nullable credential))completionHandler {
-    // Bỏ qua lỗi SSL nếu server dùng Self-Signed hoặc chưa kích hoạt HTTPS
     if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
         completionHandler(NSURLSessionAuthChallengeUseCredential, 
                           [[NSURLCredential alloc] initWithTrust:challenge.protectionSpace.serverTrust]);
@@ -59,6 +60,7 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 + (void)verifyLicense:(NSString *)licenseKey completion:(void(^)(TkietnAuthResult *result))completion;
 + (void)startWatchdog;
 + (void)showLoginPrompt;
++ (void)unlockAndLoadModMenus;
 
 @end
 
@@ -73,7 +75,47 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
     return instance;
 }
 
-// 1. LẤY MÃ PHẦN CỨNG THIẾT BỊ (HWID)
+// 1. MỞ KHÓA VÀ NẠP TOÀN BỘ MENU MOD (CHỈ CHẠY KHI NHẬP ĐÚNG KEY)
++ (void)unlockAndLoadModMenus {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSLog(@"[+] TKIETN-AUTH: Xac thuc thanh cong -> Tien hanh nap toan bo Menu Mod vao Game...");
+        NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+        
+        NSArray *modDylibs = @[
+            @"Crackbydipper.dylib",
+            @"VanNam.dylib",
+            @"EreenModz.dylib"
+        ];
+        
+        for (NSString *dylibName in modDylibs) {
+            void *handle = NULL;
+            // 1. Thu voi duong dan day du Bundle Path
+            NSString *fullPath = [bundlePath stringByAppendingPathComponent:dylibName];
+            if ([[NSFileManager defaultManager] fileExistsAtPath:fullPath]) {
+                handle = dlopen([fullPath UTF8String], RTLD_NOW | RTLD_GLOBAL);
+            }
+            // 2. Fallback thu voi @executable_path
+            if (!handle) {
+                NSString *execPath = [NSString stringWithFormat:@"@executable_path/%@", dylibName];
+                handle = dlopen([execPath UTF8String], RTLD_NOW | RTLD_GLOBAL);
+            }
+            // 3. Fallback thu voi @loader_path
+            if (!handle) {
+                NSString *loaderPath = [NSString stringWithFormat:@"@loader_path/%@", dylibName];
+                handle = dlopen([loaderPath UTF8String], RTLD_NOW | RTLD_GLOBAL);
+            }
+            
+            if (handle) {
+                NSLog(@"[+] TKIETN-AUTH: Da kich hoat thanh cong %@", dylibName);
+            } else {
+                NSLog(@"[-] TKIETN-AUTH: Khong the dlopen %@: %s", dylibName, dlerror());
+            }
+        }
+    });
+}
+
+// 2. LẤY MÃ PHẦN CỨNG THIẾT BỊ (HWID)
 + (NSString *)getDeviceHWID {
     NSString *idfv = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
     if (idfv && idfv.length > 5) {
@@ -105,7 +147,7 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
     return newUUID;
 }
 
-// 2. CHỐNG DEBUGGER (LLDB / FRIDA)
+// 3. CHỐNG DEBUGGER (LLDB / FRIDA)
 + (void)startWatchdog {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
         while (1) {
@@ -124,7 +166,7 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
     });
 }
 
-// 3. XÁC THỰC LICENSE KEY TRỰC TIẾP VỚI SERVER
+// 4. XÁC THỰC LICENSE KEY TRỰC TIẾP VỚI SERVER
 + (void)verifyLicense:(NSString *)licenseKey completion:(void(^)(TkietnAuthResult *result))completion {
     NSString *hwid = [self getDeviceHWID];
     NSString *cleanKey = [licenseKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -175,7 +217,7 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
     }] resume];
 }
 
-// 4. HIỂN THỊ GIAO DIỆN ĐĂNG NHẬP VIP
+// 5. HIỂN THỊ GIAO DIỆN ĐĂNG NHẬP (CHỈ CÓ TIÊU ĐỀ & Ô NHẬP KEY)
 + (void)showLoginPrompt {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *window = nil;
@@ -195,7 +237,6 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
         
         UIViewController *rootVC = window.rootViewController;
         if (!rootVC) {
-            // Thử lại sau 1 giây nếu game chưa khởi tạo xong View
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 [self showLoginPrompt];
             });
@@ -206,8 +247,8 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
         NSString *hwid = [self getDeviceHWID];
         NSString *savedKey = [[NSUserDefaults standardUserDefaults] objectForKey:@"TKIETN_AUTH_SAVED_KEY"] ?: @"";
         
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔑 TKIETN-AUTH VIP LOGIN"
-                                                                       message:[NSString stringWithFormat:@"Dự án: FreeFire iOS VIP\nHWID: %@", hwid]
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"tkietn - Auth"
+                                                                       message:nil
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         
         [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
@@ -225,9 +266,9 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
                 return;
             }
             
-            // Hiển thị vòng quay loading
+            // Hiển thị vòng quay loading không lộ domain
             UIAlertController *loadingAlert = [UIAlertController alertControllerWithTitle:@"Đang xác thực..."
-                                                                                  message:@"Đang liên hệ máy chủ zkvauth.site..."
+                                                                                  message:nil
                                                                            preferredStyle:UIAlertControllerStyleAlert];
             [rootVC presentViewController:loadingAlert animated:YES completion:^{
                 [self verifyLicense:inputKey completion:^(TkietnAuthResult *result) {
@@ -235,6 +276,9 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
                         if (result.success) {
                             [[NSUserDefaults standardUserDefaults] setObject:inputKey forKey:@"TKIETN_AUTH_SAVED_KEY"];
                             [[NSUserDefaults standardUserDefaults] synchronize];
+                            
+                            // KÍCH HOẠT VÀ NẠP TẤT CẢ MENU MOD VÀO GAME
+                            [self unlockAndLoadModMenus];
                             
                             UIAlertController *okAlert = [UIAlertController alertControllerWithTitle:@"🟢 ĐĂNG NHẬP THÀNH CÔNG"
                                                                                              message:[NSString stringWithFormat:@"Chào mừng Đại ca!\nHạn dùng: %@\nChúc Đại ca chơi game vui vẻ!", result.expiryDate]
@@ -285,6 +329,22 @@ __attribute__((constructor)) static void TkietnAuthAutoInit() {
     
     // Đợi 2.5 giây cho Splash / Engine Unity khởi tạo xong UIWindow
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [TkietnAuthIOS showLoginPrompt];
+        NSString *savedKey = [[NSUserDefaults standardUserDefaults] objectForKey:@"TKIETN_AUTH_SAVED_KEY"];
+        if (savedKey && savedKey.length > 5) {
+            // Tự động kiểm tra key đã lưu trước đó với server
+            [TkietnAuthIOS verifyLicense:savedKey completion:^(TkietnAuthResult *result) {
+                if (result.success) {
+                    NSLog(@"[+] TKIETN-AUTH: Key hop le -> Mo khoa toan bo Menu!");
+                    [TkietnAuthIOS unlockAndLoadModMenus];
+                } else {
+                    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"TKIETN_AUTH_SAVED_KEY"];
+                    [[NSUserDefaults standardUserDefaults] synchronize];
+                    [TkietnAuthIOS showLoginPrompt];
+                }
+            }];
+        } else {
+            // Chưa có key -> Bắt buộc hiện màn hình đăng nhập, giấu toàn bộ menu
+            [TkietnAuthIOS showLoginPrompt];
+        }
     });
 }
