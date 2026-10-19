@@ -1,0 +1,47 @@
+name: Build TkietnAuth iOS Dylib
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode Environment
+        run: |
+          sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
+          echo "SDK Path: $(xcrun --sdk iphoneos --show-sdk-path)"
+          clang --version
+
+      - name: Compile tkietn_auth.dylib (ARM64 iOS)
+        run: |
+          echo "=== Compiling tkietn_auth_ios.mm ==="
+          xcrun -sdk iphoneos clang++ -arch arm64 \
+            -shared -fPIC -O3 \
+            -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+            -miphoneos-version-min=14.0 \
+            -framework Foundation \
+            -framework UIKit \
+            -framework Security \
+            -fobjc-arc \
+            tkietn_auth_ios.mm -o tkietn_auth.dylib
+
+          codesign -f -s - tkietn_auth.dylib || true
+
+          ls -la tkietn_auth.dylib
+          file tkietn_auth.dylib
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tkietn_auth_dylib
+          path: tkietn_auth.dylib
+          if-no-files-found: error
